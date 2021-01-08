@@ -1,5 +1,9 @@
 apply plugin: 'com.android.application'
+apply plugin: 'kotlin-android'
 
+
+//昵称 hifive
+//密码全部是123456
 android {
     compileSdkVersion 28
 
@@ -21,4 +25,28 @@ android {
             proguardFiles getDefaultProguardFile('proguard-android.txt'), 'proguard-rules.pro'
         }
     }
+
+    packagingOptions{ exclude 'META-INF/rxjava.properties'}
+
+}
+
+dependencies {
+    implementation files('libs/esdk-obs-android-3.20.3.jar')
+    implementation files('libs/jackson-annotations-2.10.0.jar')
+    implementation files('libs/jackson-core-2.10.0.jar')
+    implementation files('libs/jackson-databind-2.10.0.jar')
+    implementation files('libs/java-xmlbuilder-1.2.jar')
+    implementation files('libs/okhttp-3.14.2.jar')
+    implementation files('libs/okio-1.17.2.jar')
+    implementation "org.jetbrains.kotlin:kotlin-stdlib-jdk7:$kotlin_version"
+    implementation 'com.tbruyelle.rxpermissions2:rxpermissions:0.9.4@aar'
+    implementation 'io.reactivex:rxjava:1.3.4'
+    implementation 'io.reactivex:rxandroid:1.2.1'
+    implementation 'com.jakewharton.rxbinding2:rxbinding:2.0.0'
+
+
+}
+repositories {
+    maven { url 'https://dl.bintray.com/kotlin/kotlin-eap' }
+    mavenCentral()
 }

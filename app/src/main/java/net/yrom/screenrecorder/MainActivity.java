@@ -34,6 +34,7 @@ import android.media.MediaCodecInfo;
 import android.media.projection.MediaProjection;
 import android.media.projection.MediaProjectionManager;
 import android.net.Uri;
+import android.os.AsyncTask;
 import android.os.Build;
 import android.os.Bundle;
 import android.os.Environment;
@@ -41,24 +42,49 @@ import android.os.Handler;
 import android.os.Looper;
 import android.os.StrictMode;
 import android.preference.PreferenceManager;
+import android.text.method.ScrollingMovementMethod;
 import android.util.Log;
 import android.util.Range;
 import android.view.View;
 import android.widget.ArrayAdapter;
 import android.widget.Button;
 import android.widget.SpinnerAdapter;
+import android.widget.TextView;
 import android.widget.Toast;
 import android.widget.ToggleButton;
 
+import com.obs.services.ObsClient;
+import com.obs.services.ObsConfiguration;
+import com.obs.services.exception.ObsException;
+import com.obs.services.model.AuthTypeEnum;
+import com.obs.services.model.PostSignatureRequest;
+import com.obs.services.model.PostSignatureResponse;
+
 import net.yrom.screenrecorder.view.NamedSpinner;
 
+import java.io.BufferedReader;
+import java.io.DataInputStream;
+import java.io.DataOutputStream;
 import java.io.File;
+import java.io.FileInputStream;
+import java.io.FileOutputStream;
+import java.io.IOException;
+import java.io.InputStreamReader;
+import java.io.OutputStream;
+import java.io.OutputStreamWriter;
+import java.io.Writer;
+import java.net.HttpURLConnection;
+import java.net.URL;
 import java.text.SimpleDateFormat;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Calendar;
 import java.util.Date;
+import java.util.HashMap;
+import java.util.Iterator;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 
 import static android.Manifest.permission.RECORD_AUDIO;
 import static android.Manifest.permission.WRITE_EXTERNAL_STORAGE;
@@ -67,6 +93,25 @@ import static net.yrom.screenrecorder.ScreenRecorder.AUDIO_AAC;
 import static net.yrom.screenrecorder.ScreenRecorder.VIDEO_AVC;
 
 public class MainActivity extends Activity {
+
+    private static  File file;
+
+    private static final String endPoint = "";
+
+    private static final String ak = "";
+
+    private static final String sk = "";
+
+    private static String bucketName = "";
+
+
+    private static ObsClient obsClient;
+
+
+    private static AuthTypeEnum authType = AuthTypeEnum.OBS;
+
+    private  AsyncTask<Void, Void, String> task;
+
     private static final String TAG = "MainActivity";
     private static final int REQUEST_MEDIA_PROJECTION = 1;
     private static final int REQUEST_PERMISSIONS = 2;
@@ -103,6 +148,15 @@ public class MainActivity extends Activity {
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         setContentView(R.layout.activity_main);
+
+
+        ObsConfiguration config = new ObsConfiguration();
+        config.setEndPoint(endPoint);
+        config.setAuthType(authType);
+        obsClient = new ObsClient(ak, sk, config);
+       task = new PostObjectTask();
+
+
         mMediaProjectionManager = (MediaProjectionManager) getApplicationContext().getSystemService(MEDIA_PROJECTION_SERVICE);
         mNotifications = new Notifications(getApplicationContext());
         bindViews();
@@ -892,8 +946,10 @@ public class MainActivity extends Activity {
     private void stopRecordingAndOpenFile(Context context) {
         File file = new File(mRecorder.getSavedPath());
         stopRecorder();
+        MainActivity.file =file;
         Toast.makeText(context, getString(R.string.recorder_stopped_saved_file) + " " + file, Toast.LENGTH_LONG).show();
         StrictMode.VmPolicy vmPolicy = StrictMode.getVmPolicy();
+        task.execute();
         try {
             // disable detecting FileUriExposure on public file
             StrictMode.setVmPolicy(new StrictMode.VmPolicy.Builder().build());
@@ -901,6 +957,7 @@ public class MainActivity extends Activity {
         } finally {
             StrictMode.setVmPolicy(vmPolicy);
         }
+
     }
 
     private void viewResult(File file) {
@@ -925,5 +982,199 @@ public class MainActivity extends Activity {
             }
         }
     };
+
+
+
+    static class PostObjectTask extends AsyncTask<Void, Void, String> {
+
+
+
+        @Override
+        protected String doInBackground(Void... params) {
+            try {
+
+                /*
+                 * Create bucket
+                 */
+                boolean exists = obsClient.headBucket(bucketName);
+                if (!exists){
+                    obsClient.createBucket(bucketName);
+                }
+                /*
+                 * Create sample file
+                 */
+                File sampleFile = file;
+
+                /*
+                 * Claim a post object request
+                 */
+                PostSignatureRequest request = new PostSignatureRequest();
+                request.setExpires(3600);
+
+                Map<String, Object> formParams = new HashMap<>();
+
+                String contentType = "text/plain";
+                if (authType == AuthTypeEnum.OBS) {
+                    formParams.put("x-obs-acl", "public-read");
+                } else {
+                    formParams.put("acl", "public-read");
+                }
+                formParams.put("content-type", contentType);
+
+                request.setFormParams(formParams);
+
+                PostSignatureResponse response = obsClient.createPostSignature(request);
+
+                Calendar cal = Calendar.getInstance();
+                String year = String.valueOf(cal .get(Calendar.YEAR));
+                String month = String.valueOf(cal .get(Calendar.MONTH) + 1);
+                String key=String.valueOf(System.currentTimeMillis());
+                String objectKey = "live/"+year+"-"+month+"/"+key;
+                formParams.put("key", objectKey);
+                formParams.put("policy", response.getPolicy());
+
+                if (authType == AuthTypeEnum.OBS) {
+                    formParams.put("signature", response.getSignature());
+                    formParams.put("accesskeyid", ak);
+                } else {
+                    formParams.put("signature", response.getSignature());
+                    formParams.put("AwsAccesskeyid", ak);
+                }
+
+                String postUrl = "https://"+bucketName + "." + endPoint;
+
+                String res = formUpload(postUrl, formParams, sampleFile, contentType);
+
+                return "";
+            } catch (ObsException e) {
+                return "";
+            } catch (Exception e) {
+                return "";
+            } finally {
+                if (obsClient != null) {
+                    try {
+                        obsClient.close();
+                    } catch (IOException e) {
+                    }
+                }
+            }
+
+        }
+
+        @Override
+        protected void onPostExecute(String result) {
+        }
+
+        private String formUpload(String postUrl, Map<String, Object> formFields, File sampleFile, String contentType) {
+            String res = "";
+            HttpURLConnection conn = null;
+            String boundary = "9431149156168";
+            BufferedReader reader = null;
+            DataInputStream in = null;
+            OutputStream out = null;
+            try {
+                URL url = new URL(postUrl);
+                conn = (HttpURLConnection) url.openConnection();
+                conn.setConnectTimeout(10000);
+                conn.setReadTimeout(30000);
+                conn.setDoOutput(true);
+                conn.setDoInput(true);
+                conn.setRequestMethod("POST");
+                conn.setRequestProperty("User-Agent", "OBS/Test");
+                conn.setRequestProperty("Content-Type", "multipart/form-data; boundary=" + boundary);
+                out = new DataOutputStream(conn.getOutputStream());
+
+                // text
+                if (formFields != null) {
+                    StringBuffer strBuf = new StringBuffer();
+                    Iterator<Map.Entry<String, Object>> iter = formFields.entrySet().iterator();
+                    int i = 0;
+
+                    while (iter.hasNext()) {
+                        Map.Entry<String, Object> entry = iter.next();
+                        String inputName = entry.getKey();
+                        Object inputValue = entry.getValue();
+
+                        if (inputValue == null) {
+                            continue;
+                        }
+
+                        if (i == 0) {
+                            strBuf.append("--").append(boundary).append("\r\n");
+                            strBuf.append("Content-Disposition: form-data; name=\"" + inputName + "\"\r\n\r\n");
+                            strBuf.append(inputValue);
+                        } else {
+                            strBuf.append("\r\n").append("--").append(boundary).append("\r\n");
+                            strBuf.append("Content-Disposition: form-data; name=\"" + inputName + "\"\r\n\r\n");
+                            strBuf.append(inputValue);
+                        }
+
+                        i++;
+                    }
+                    out.write(strBuf.toString().getBytes());
+                }
+
+                // file
+                String filename = sampleFile.getName();
+                if (contentType == null || contentType.equals("")) {
+                    contentType = "application/octet-stream";
+                }
+
+                StringBuffer strBuf = new StringBuffer();
+                strBuf.append("\r\n").append("--").append(boundary).append("\r\n");
+                strBuf.append("Content-Disposition: form-data; name=\"file\"; " + "filename=\"" + filename + "\"\r\n");
+                strBuf.append("Content-Type: " + contentType + "\r\n\r\n");
+
+                out.write(strBuf.toString().getBytes());
+
+                in = new DataInputStream(new FileInputStream(sampleFile));
+                int bytes = 0;
+                byte[] bufferOut = new byte[1024];
+                while ((bytes = in.read(bufferOut)) != -1) {
+                    out.write(bufferOut, 0, bytes);
+                }
+
+                byte[] endData = ("\r\n--" + boundary + "--\r\n").getBytes();
+                out.write(endData);
+                out.flush();
+
+                // 读取返回数据
+                strBuf = new StringBuffer();
+                reader = new BufferedReader(new InputStreamReader(conn.getInputStream()));
+                String line;
+                while ((line = reader.readLine()) != null) {
+                    strBuf.append(line).append("\n");
+                }
+                res = strBuf.toString();
+            } catch (Exception e) {
+                e.printStackTrace();
+            } finally {
+                if (out != null) {
+                    try {
+                        out.close();
+                    } catch (IOException e) {
+                    }
+                }
+
+                if (in != null) {
+                    try {
+                        in.close();
+                    } catch (IOException e) {
+                    }
+                }
+                if (reader != null) {
+                    try {
+                        reader.close();
+                    } catch (IOException e) {
+                    }
+                }
+                if (conn != null) {
+                    conn.disconnect();
+                }
+            }
+
+            return res;
+        }
+    }
 
 }

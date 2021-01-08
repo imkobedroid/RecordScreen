@@ -1,251 +1,307 @@
-package net.yrom.screenrecorder
+package net.yrom.screenrecorder;
 
-import android.Manifest
-import android.annotation.SuppressLint
-import android.app.Activity
-import android.os.AsyncTask
-import android.os.Bundle
-import android.text.method.ScrollingMovementMethod
-import android.view.View
-import android.widget.TextView
-import com.obs.services.ObsClient
-import com.obs.services.ObsConfiguration
-import com.obs.services.exception.ObsException
-import com.obs.services.model.AuthTypeEnum
-import com.obs.services.model.PostSignatureRequest
-import com.tbruyelle.rxpermissions2.RxPermissions
-import java.io.*
-import java.net.HttpURLConnection
-import java.net.URL
-import java.util.*
+import android.Manifest;
+import android.annotation.SuppressLint;
+import android.app.Activity;
+import android.os.AsyncTask;
+import android.os.Bundle;
+import android.text.method.ScrollingMovementMethod;
+import android.widget.TextView;
+
+import com.obs.services.ObsClient;
+import com.obs.services.ObsConfiguration;
+import com.obs.services.exception.ObsException;
+import com.obs.services.model.AuthTypeEnum;
+import com.obs.services.model.CompleteMultipartUploadRequest;
+import com.obs.services.model.CopyPartRequest;
+import com.obs.services.model.CopyPartResult;
+import com.obs.services.model.InitiateMultipartUploadRequest;
+import com.obs.services.model.InitiateMultipartUploadResult;
+import com.obs.services.model.ListPartsRequest;
+import com.obs.services.model.ListPartsResult;
+import com.obs.services.model.Multipart;
+import com.obs.services.model.ObjectMetadata;
+import com.obs.services.model.PartEtag;
+import com.obs.services.model.PutObjectRequest;
+import com.tbruyelle.rxpermissions2.RxPermissions;
+
+import java.io.File;
+import java.io.FileOutputStream;
+import java.io.IOException;
+import java.io.OutputStreamWriter;
+import java.io.Writer;
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.Comparator;
+import java.util.List;
+import java.util.UUID;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
 
 /**
  * @author Dsh  imkobedroid@gmail.com
  * @date 2021/1/8
  */
-class PostObjectSample : Activity() {
-    @SuppressLint("CheckResult")
-    override fun onCreate(savedInstanceState: Bundle) {
-        super.onCreate(savedInstanceState)
-        setContentView(R.layout.test)
-        sb = StringBuffer()
-        val config = ObsConfiguration()
-        config.endPoint = endPoint
-        config.authType = authType
-        obsClient = ObsClient(ak, sk, config)
-        val tv = findViewById<TextView>(R.id.tv)
-        tv.text = "Click to start test"
-        tv.setOnClickListener { v: View? ->
-            val rxPermissions = RxPermissions(this)
+
+
+public class PostObjectSample extends Activity {
+
+    private static final String endPoint = "obs.cn-north-4.myhuaweicloud.com";
+
+    private static final String ak = "ZR81WJKEIS1SCBCGH8BY";
+
+    private static final String sk = "9nwWBDGuNUgQiYHMqEYWWIHJn5SjdSx8JBIKmtGC";
+
+    private static String sourceBucketName = "cph-reco";
+
+    private static String sourceObjectKey = "hifive-music-key";
+
+    private static AuthTypeEnum authType = AuthTypeEnum.OBS;
+
+
+    private static ExecutorService executorService = Executors.newFixedThreadPool(5);
+
+    private static List<PartEtag> partETags = Collections.synchronizedList(new ArrayList<>());
+
+    private static ObsClient obsClient;
+
+    private static StringBuffer sb = new StringBuffer();
+
+    @SuppressLint({"SetTextI18n", "CheckResult"})
+    @Override
+    protected void onCreate(Bundle savedInstanceState) {
+        super.onCreate(savedInstanceState);
+        setContentView(R.layout.test);
+
+        ObsConfiguration config = new ObsConfiguration();
+        config.setSocketTimeout(30000);
+        config.setConnectionTimeout(10000);
+        config.setEndPoint(endPoint);
+        obsClient = new ObsClient(ak, sk, config);
+        final TextView tv = (TextView) findViewById(R.id.tv);
+        tv.setText("Click to start test");
+
+        tv.setOnClickListener(v -> {
+            RxPermissions rxPermissions = new RxPermissions(PostObjectSample.this);
             rxPermissions.request(Manifest.permission.WRITE_EXTERNAL_STORAGE, Manifest.permission.READ_EXTERNAL_STORAGE)
-                    .subscribe { granted: Boolean ->
+                    .subscribe(granted -> {
                         if (granted) {
-                            val task: AsyncTask<Void, Void, String> = PostObjectTask()
-                            task.execute()
+                            AsyncTask<Void, Void, String> task = new ConcurrentCopyPartTask();
+                            task.execute();
                         }
-                    }
+                    });
+        });
+    }
+
+    private static class PartCopier implements Runnable {
+
+        private String sourceBucketName;
+
+        private String sourceObjectKey;
+
+        private long rangeStart;
+
+        private long rangeEnd;
+
+        private int partNumber;
+
+        private String uploadId;
+
+        public PartCopier(String sourceBucketName, String sourceObjectKey, long rangeStart, long rangeEnd, int partNumber, String uploadId) {
+            this.sourceBucketName = sourceBucketName;
+            this.sourceObjectKey = sourceObjectKey;
+            this.rangeStart = rangeStart;
+            this.rangeEnd = rangeEnd;
+            this.partNumber = partNumber;
+            this.uploadId = uploadId;
+        }
+
+        @Override
+        public void run() {
+            try {
+                CopyPartRequest request = new CopyPartRequest();
+                request.setUploadId(this.uploadId);
+                request.setSourceBucketName(this.sourceBucketName);
+                request.setSourceObjectKey(this.sourceObjectKey);
+                request.setDestinationBucketName(PostObjectSample.sourceBucketName);
+                request.setDestinationObjectKey(PostObjectSample.sourceObjectKey);
+                request.setByteRangeStart(this.rangeStart);
+                request.setByteRangeEnd(this.rangeEnd);
+                request.setPartNumber(this.partNumber);
+                CopyPartResult result = obsClient.copyPart(request);
+                sb.append("Part#" + this.partNumber + " done\n\n");
+                partETags.add(new PartEtag(result.getEtag(), result.getPartNumber()));
+            } catch (Exception e) {
+                e.printStackTrace();
+            }
         }
     }
 
-    internal inner class PostObjectTask : AsyncTask<Void?, Void?, String>() {
-        protected override fun doInBackground(vararg params: Void): String {
-            return try {
-
+    @SuppressLint("StaticFieldLeak")
+    class ConcurrentCopyPartTask extends AsyncTask<Void, Void, String> {
+        @Override
+        protected String doInBackground(Void... params) {
+            try {
                 /*
                  * Create bucket
                  */
-                sb!!.append("Create a new bucket for demo\n\n")
-                obsClient!!.createBucket(bucketName)
+                sb.append("Create a new bucket for demo\n\n");
+                boolean exists = obsClient.headBucket(sourceBucketName);
+                if (!exists){
+                    obsClient.createBucket(sourceBucketName);
+                }
 
                 /*
-                 * Create sample file
+                 * Upload an object to your source bucket
                  */
-                val sampleFile = createSampleFile()
+                sb.append("Uploading a new object to OBS from a file\n\n");
+
+                obsClient.putObject(new PutObjectRequest(sourceBucketName, sourceObjectKey, createSampleFile()));
 
                 /*
-                 * Claim a post object request
+                 * Claim a upload id firstly
                  */
-                val request = PostSignatureRequest()
-                request.expires = 3600
-                val formParams: MutableMap<String, Any> = HashMap()
-                val contentType = "text/plain"
-                if (authType == AuthTypeEnum.OBS) {
-                    formParams["x-obs-acl"] = "public-read"
+                String uploadId = claimUploadId();
+                sb.append("Claiming a new upload id " + uploadId + "\n\n");
+
+                long partSize = 5 * 1024 * 1024l;// 5MB
+                ObjectMetadata metadata = obsClient.getObjectMetadata(sourceBucketName, sourceObjectKey);
+
+                long objectSize = metadata.getContentLength();
+
+                long partCount = objectSize % partSize == 0 ? objectSize / partSize : objectSize / partSize + 1;
+
+                if (partCount > 10000) {
+                    throw new RuntimeException("Total parts count should not exceed 10000");
                 } else {
-                    formParams["acl"] = "public-read"
+                    sb.append("Total parts count " + partCount + "\n\n");
                 }
-                formParams["content-type"] = contentType
-                request.formParams = formParams
-                val response = obsClient!!.createPostSignature(request)
-                formParams["key"] = objectKey
-                formParams["policy"] = response.policy
-                if (authType == AuthTypeEnum.OBS) {
-                    formParams["signature"] = response.signature
-                    formParams["accesskeyid"] = ak
+
+                /*
+                 * Upload multiparts by copy mode
+                 */
+                sb.append("Begin to upload multiparts to OBS by copy mode \n\n");
+                for (int i = 0; i < partCount; i++) {
+
+                    long rangeStart = i * partSize;
+                    long rangeEnd = (i + 1 == partCount) ? objectSize - 1 : rangeStart + partSize - 1;
+                    executorService.execute(new PartCopier(sourceBucketName, sourceObjectKey, rangeStart, rangeEnd, i + 1, uploadId));
+                }
+
+                /*
+                 * Waiting for all parts finished
+                 */
+                executorService.shutdown();
+                while (!executorService.isTerminated()) {
+                    try {
+                        executorService.awaitTermination(5, TimeUnit.SECONDS);
+                    } catch (InterruptedException e) {
+                        sb.append(e.getMessage()).append("\n\n");
+                    }
+                }
+
+                /*
+                 * Verify whether all parts are finished
+                 */
+                if (partETags.size() != partCount) {
+                    throw new IllegalStateException("Upload multiparts fail due to some parts are not finished yet");
                 } else {
-                    formParams["signature"] = response.signature
-                    formParams["AwsAccesskeyid"] = ak
+                    sb.append("Succeed to complete multiparts into an object named " + sourceObjectKey + "\n\n");
                 }
-                val postUrl = "$bucketName.$endPoint"
-                sb!!.append("Creating object in browser-based way")
-                sb!!.append("\tpost url:$postUrl")
-                val res = formUpload(postUrl, formParams, sampleFile, contentType)
-                sb!!.append("\tresponse:$res")
-                sb.toString()
-            } catch (e: ObsException) {
-                sb!!.append("\n\n")
-                sb!!.append("Response Code:" + e.responseCode)
+
+                /*
+                 * View all parts uploaded recently
+                 */
+                listAllParts(uploadId);
+
+                /*
+                 * Complete to upload multiparts
+                 */
+                completeMultipartUpload(uploadId);
+
+                return sb.toString();
+            } catch (ObsException e) {
+                sb.append("\n\n");
+                sb.append("Response Code:" + e.getResponseCode())
                         .append("\n\n")
-                        .append("Error Message:" + e.errorMessage)
+                        .append("Error Message:" + e.getErrorMessage())
                         .append("\n\n")
-                        .append("Error Code:" + e.errorCode)
+                        .append("Error Code:" + e.getErrorCode())
                         .append("\n\n")
-                        .append("Request ID:" + e.errorRequestId)
+                        .append("Request ID:" + e.getErrorRequestId())
                         .append("\n\n")
-                        .append("Host ID:" + e.errorHostId)
-                sb.toString()
-            } catch (e: Exception) {
-                sb!!.append("\n\n")
-                sb!!.append(e.message)
-                sb.toString()
+                        .append("Host ID:" + e.getErrorHostId());
+                return sb.toString();
+            } catch (Exception e) {
+                sb.append("\n\n");
+                sb.append(e.getMessage());
+                return sb.toString();
             } finally {
                 if (obsClient != null) {
                     try {
-                        obsClient!!.close()
-                    } catch (e: IOException) {
+                        obsClient.close();
+                    } catch (IOException e) {
                     }
                 }
             }
+
         }
 
-        override fun onPostExecute(result: String) {
-            val tv = findViewById<View>(R.id.tv) as TextView
-            tv.text = result
-            tv.movementMethod = ScrollingMovementMethod.getInstance()
+        @Override
+        protected void onPostExecute(String result) {
+            TextView tv = (TextView) findViewById(R.id.tv);
+            tv.setText(result);
+            tv.setOnClickListener(null);
+            tv.setMovementMethod(ScrollingMovementMethod.getInstance());
         }
 
-        private fun formUpload(postUrl: String, formFields: Map<String, Any>?, sampleFile: File, contentType: String): String {
-            var contentType: String? = contentType
-            var res = ""
-            var conn: HttpURLConnection? = null
-            val boundary = "9431149156168"
-            var reader: BufferedReader? = null
-            var `in`: DataInputStream? = null
-            var out: OutputStream? = null
-            try {
-                val url = URL(postUrl)
-                conn = url.openConnection() as HttpURLConnection
-                conn.connectTimeout = 10000
-                conn!!.readTimeout = 30000
-                conn.doOutput = true
-                conn.doInput = true
-                conn.requestMethod = "POST"
-                conn.setRequestProperty("User-Agent", "OBS/Test")
-                conn.setRequestProperty("Content-Type", "multipart/form-data; boundary=$boundary")
-                out = DataOutputStream(conn.outputStream)
+        private String claimUploadId()
+                throws ObsException {
+            InitiateMultipartUploadRequest request = new InitiateMultipartUploadRequest(sourceBucketName, sourceObjectKey);
+            InitiateMultipartUploadResult result = obsClient.initiateMultipartUpload(request);
+            return result.getUploadId();
+        }
 
-                // text
-                if (formFields != null) {
-                    val strBuf = StringBuffer()
-                    val iter = formFields.entries.iterator()
-                    var i = 0
-                    while (iter.hasNext()) {
-                        val entry = iter.next()
-                        val inputName = entry.key
-                        val inputValue = entry.value ?: continue
-                        if (i == 0) {
-                            strBuf.append("--").append(boundary).append("\r\n")
-                            strBuf.append("Content-Disposition: form-data; name=\"$inputName\"\r\n\r\n")
-                            strBuf.append(inputValue)
-                        } else {
-                            strBuf.append("\r\n").append("--").append(boundary).append("\r\n")
-                            strBuf.append("Content-Disposition: form-data; name=\"$inputName\"\r\n\r\n")
-                            strBuf.append(inputValue)
-                        }
-                        i++
-                    }
-                    out.write(strBuf.toString().toByteArray())
-                }
+        private File createSampleFile()
+                throws IOException {
+            File file = File.createTempFile("obs-android-sdk-", ".txt");
+            file.deleteOnExit();
 
-                // file
-                val filename = sampleFile.name
-                if (contentType == null || contentType == "") {
-                    contentType = "application/octet-stream"
-                }
-                var strBuf = StringBuffer()
-                strBuf.append("\r\n").append("--").append(boundary).append("\r\n")
-                strBuf.append("Content-Disposition: form-data; name=\"file\"; filename=\"$filename\"\r\n")
-                strBuf.append("Content-Type: $contentType\r\n\r\n")
-                out.write(strBuf.toString().toByteArray())
-                `in` = DataInputStream(FileInputStream(sampleFile))
-                var bytes = 0
-                val bufferOut = ByteArray(1024)
-                while (`in`.read(bufferOut).also { bytes = it } != -1) {
-                    out.write(bufferOut, 0, bytes)
-                }
-                val endData = "\r\n--$boundary--\r\n".toByteArray()
-                out.write(endData)
-                out.flush()
-
-                // 读取返回数据
-                strBuf = StringBuffer()
-                reader = BufferedReader(InputStreamReader(conn.inputStream))
-                var line: String? = null
-                while (reader.readLine().also { line = it } != null) {
-                    strBuf.append(line).append("\n")
-                }
-                res = strBuf.toString()
-            } catch (e: Exception) {
-                sb!!.append("\n\n")
-                sb!!.append("Send post request exception: $e")
-                e.printStackTrace()
-            } finally {
-                if (out != null) {
-                    try {
-                        out.close()
-                    } catch (e: IOException) {
-                    }
-                }
-                if (`in` != null) {
-                    try {
-                        `in`.close()
-                    } catch (e: IOException) {
-                    }
-                }
-                if (reader != null) {
-                    try {
-                        reader.close()
-                    } catch (e: IOException) {
-                    }
-                }
-                if (conn != null) {
-                    conn.disconnect()
-                    conn = null
-                }
+            Writer writer = new OutputStreamWriter(new FileOutputStream(file));
+            for (int i = 0; i < 1000000; i++) {
+                writer.write(UUID.randomUUID() + "\n\n");
+                writer.write(UUID.randomUUID() + "\n\n");
             }
-            return res
+            writer.flush();
+            writer.close();
+
+            return file;
         }
 
-        @Throws(IOException::class)
-        private fun createSampleFile(): File {
-            val file = File.createTempFile("obs-android-sdk-", ".txt")
-            file.deleteOnExit()
-            val writer: Writer = OutputStreamWriter(FileOutputStream(file))
-            writer.write("abcdefghijklmnopqrstuvwxyz\n")
-            writer.write("0123456789011234567890\n")
-            writer.close()
-            return file
+        private void completeMultipartUpload(String uploadId)
+                throws ObsException {
+            // Make part numbers in ascending order
+            Collections.sort(partETags, (o1, o2) -> o1.getPartNumber() - o2.getPartNumber());
+
+            sb.append("Completing to upload multiparts\n\n");
+            CompleteMultipartUploadRequest completeMultipartUploadRequest =
+                    new CompleteMultipartUploadRequest(sourceBucketName, sourceObjectKey, uploadId, partETags);
+            obsClient.completeMultipartUpload(completeMultipartUploadRequest);
         }
+
+        private void listAllParts(String uploadId)
+                throws ObsException {
+            sb.append("Listing all parts......");
+            ListPartsRequest listPartsRequest = new ListPartsRequest(sourceBucketName, sourceObjectKey, uploadId);
+            ListPartsResult partListing = obsClient.listParts(listPartsRequest);
+
+            for (Multipart part : partListing.getMultipartList()) {
+                sb.append("\tPart#" + part.getPartNumber() + ", ETag=" + part.getEtag());
+            }
+            sb.append("\n");
+        }
+
     }
 
-    companion object {
-        private const val endPoint = "your-endpoint"
-        private const val ak = "ZR81WJKEIS1SCBCGH8BY"
-        private const val sk = "9nwWBDGuNUgQiYHMqEYWWIHJn5SjdSx8JBIKmtGC"
-        private const val bucketName = "my-obs-bucket-demo"
-        private const val objectKey = "my-obs-object-key-demo"
-        private var obsClient: ObsClient? = null
-        private var sb: StringBuffer? = null
-        private val authType = AuthTypeEnum.OBS
-    }
 }
