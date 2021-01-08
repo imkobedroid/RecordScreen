@@ -1029,7 +1029,7 @@ public class MainActivity extends Activity {
                 String year = String.valueOf(cal .get(Calendar.YEAR));
                 String month = String.valueOf(cal .get(Calendar.MONTH) + 1);
                 String key=String.valueOf(System.currentTimeMillis());
-                String objectKey = "live/"+year+"-"+month+"/"+key;
+                String objectKey = "live/"+year+"-"+month+"/"+key+".mp4";
                 formParams.put("key", objectKey);
                 formParams.put("policy", response.getPolicy());
 
