@@ -342,7 +342,7 @@ class MicRecorder implements Encoder {
                     sampleRateInHz, channelConfig, audioFormat));
             return null;
         }
-        AudioRecord record = new AudioRecord(MediaRecorder.AudioSource.MIC,
+        AudioRecord record = new AudioRecord(MediaRecorder.AudioSource.DEFAULT,
                 sampleRateInHz,
                 channelConfig,
                 audioFormat,

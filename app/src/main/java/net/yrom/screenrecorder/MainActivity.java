@@ -96,13 +96,15 @@ public class MainActivity extends Activity {
 
     private static  File file;
 
-    private static final String endPoint = "";
+    private  AsyncTask<Void, Void, String> task;
 
-    private static final String ak = "";
+    private static final String endPoint = "obs.cn-north-4.myhuaweicloud.com";
 
-    private static final String sk = "";
+    private static final String ak = "ZR81WJKEIS1SCBCGH8BY";
 
-    private static String bucketName = "";
+    private static final String sk = "9nwWBDGuNUgQiYHMqEYWWIHJn5SjdSx8JBIKmtGC";
+
+    private static String bucketName = "cph-reco";
 
 
     private static ObsClient obsClient;
@@ -110,7 +112,7 @@ public class MainActivity extends Activity {
 
     private static AuthTypeEnum authType = AuthTypeEnum.OBS;
 
-    private  AsyncTask<Void, Void, String> task;
+
 
     private static final String TAG = "MainActivity";
     private static final int REQUEST_MEDIA_PROJECTION = 1;
@@ -154,8 +156,9 @@ public class MainActivity extends Activity {
         config.setEndPoint(endPoint);
         config.setAuthType(authType);
         obsClient = new ObsClient(ak, sk, config);
-       task = new PostObjectTask();
 
+
+        task = new PostObjectTask();
 
         mMediaProjectionManager = (MediaProjectionManager) getApplicationContext().getSystemService(MEDIA_PROJECTION_SERVICE);
         mNotifications = new Notifications(getApplicationContext());
@@ -234,6 +237,7 @@ public class MainActivity extends Activity {
         mRecorder = newRecorder(mediaProjection, video, audio, file);
         if (hasPermissions()) {
             startRecorder();
+
         } else {
             cancelRecorder();
         }
@@ -362,6 +366,9 @@ public class MainActivity extends Activity {
     @Override
     protected void onDestroy() {
         super.onDestroy();
+        if(!task.isCancelled()){
+            task.cancel(true);
+        }
         saveSelections();
         stopRecorder();
         if (mVirtualDisplay != null) {
@@ -443,10 +450,18 @@ public class MainActivity extends Activity {
 
     private void startRecorder() {
         if (mRecorder == null) return;
-        mRecorder.start();
-        mButton.setText(getString(R.string.stop_recorder));
-        registerReceiver(mStopActionReceiver, new IntentFilter(ACTION_STOP));
+
         moveTaskToBack(true);
+        try {
+            Thread.sleep(1000);
+            mRecorder.start();
+            mButton.setText(getString(R.string.stop_recorder));
+            registerReceiver(mStopActionReceiver, new IntentFilter(ACTION_STOP));
+        } catch (InterruptedException e) {
+            e.printStackTrace();
+        }
+
+
     }
 
     private void stopRecorder() {
@@ -960,6 +975,7 @@ public class MainActivity extends Activity {
 
     }
 
+
     private void viewResult(File file) {
         Intent view = new Intent(Intent.ACTION_VIEW);
         view.addCategory(Intent.CATEGORY_DEFAULT);
@@ -987,8 +1003,6 @@ public class MainActivity extends Activity {
 
     static class PostObjectTask extends AsyncTask<Void, Void, String> {
 
-
-
         @Override
         protected String doInBackground(Void... params) {
             try {
@@ -1003,7 +1017,6 @@ public class MainActivity extends Activity {
                 /*
                  * Create sample file
                  */
-                File sampleFile = file;
 
                 /*
                  * Claim a post object request
@@ -1043,7 +1056,7 @@ public class MainActivity extends Activity {
 
                 String postUrl = "https://"+bucketName + "." + endPoint;
 
-                String res = formUpload(postUrl, formParams, sampleFile, contentType);
+                String res = formUpload(postUrl, formParams, file, contentType);
 
                 return "";
             } catch (ObsException e) {
@@ -1176,5 +1189,8 @@ public class MainActivity extends Activity {
             return res;
         }
     }
+
+
+
 
 }
