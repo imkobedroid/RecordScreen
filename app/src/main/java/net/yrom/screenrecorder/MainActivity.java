@@ -15,6 +15,7 @@
  */
 package net.yrom.screenrecorder;
 
+import android.annotation.SuppressLint;
 import android.annotation.TargetApi;
 import android.app.Activity;
 import android.app.AlertDialog;
@@ -25,6 +26,7 @@ import android.content.Intent;
 import android.content.IntentFilter;
 import android.content.SharedPreferences;
 import android.content.pm.ActivityInfo;
+import android.content.pm.PackageInfo;
 import android.content.pm.PackageManager;
 import android.content.res.Configuration;
 import android.graphics.Point;
@@ -42,7 +44,6 @@ import android.os.Handler;
 import android.os.Looper;
 import android.os.StrictMode;
 import android.preference.PreferenceManager;
-import android.text.method.ScrollingMovementMethod;
 import android.util.Log;
 import android.util.Range;
 import android.view.View;
@@ -67,12 +68,9 @@ import java.io.DataInputStream;
 import java.io.DataOutputStream;
 import java.io.File;
 import java.io.FileInputStream;
-import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.InputStreamReader;
 import java.io.OutputStream;
-import java.io.OutputStreamWriter;
-import java.io.Writer;
 import java.net.HttpURLConnection;
 import java.net.URL;
 import java.text.SimpleDateFormat;
@@ -85,6 +83,7 @@ import java.util.Iterator;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.concurrent.ExecutionException;
 
 import static android.Manifest.permission.RECORD_AUDIO;
 import static android.Manifest.permission.WRITE_EXTERNAL_STORAGE;
@@ -98,13 +97,13 @@ public class MainActivity extends Activity {
 
     private  AsyncTask<Void, Void, String> task;
 
-    private static final String endPoint = "obs.cn-north-4.myhuaweicloud.com";
+    private static final String endPoint = "";
 
-    private static final String ak = "ZR81WJKEIS1SCBCGH8BY";
+    private static final String ak = "";
 
-    private static final String sk = "9nwWBDGuNUgQiYHMqEYWWIHJn5SjdSx8JBIKmtGC";
+    private static final String sk = "";
 
-    private static String bucketName = "cph-reco";
+    private static String bucketName = "";
 
 
     private static ObsClient obsClient;
@@ -136,6 +135,8 @@ public class MainActivity extends Activity {
     private MediaCodecInfo[] mAvcCodecInfos; // avc codecs
     private MediaCodecInfo[] mAacCodecInfos; // aac codecs
     private Notifications mNotifications;
+    private TextView path;
+    private TextView version;
 
     /**
      * <b>NOTE:</b>
@@ -146,43 +147,19 @@ public class MainActivity extends Activity {
     private MediaProjection mMediaProjection;
     private VirtualDisplay mVirtualDisplay;
 
-    @Override
-    protected void onCreate(Bundle savedInstanceState) {
-        super.onCreate(savedInstanceState);
-        setContentView(R.layout.activity_main);
-
-
-        ObsConfiguration config = new ObsConfiguration();
-        config.setEndPoint(endPoint);
-        config.setAuthType(authType);
-        obsClient = new ObsClient(ak, sk, config);
-
-
-        task = new PostObjectTask();
-
-        mMediaProjectionManager = (MediaProjectionManager) getApplicationContext().getSystemService(MEDIA_PROJECTION_SERVICE);
-        mNotifications = new Notifications(getApplicationContext());
-        bindViews();
-
-        Utils.findEncodersByTypeAsync(VIDEO_AVC, infos -> {
-            logCodecInfos(infos, VIDEO_AVC);
-            mAvcCodecInfos = infos;
-            Log.d(TAG, "onCreate: " + infos[0].getName());
-            SpinnerAdapter codecsAdapter = createCodecsAdapter(mAvcCodecInfos);
-            mVideoCodec.setAdapter(codecsAdapter);
-            restoreSelections(mVideoCodec, mVieoResolution, mVideoFramerate, mIFrameInterval, mVideoBitrate);
-
-        });
-        Utils.findEncodersByTypeAsync(AUDIO_AAC, infos -> {
-            logCodecInfos(infos, AUDIO_AAC);
-            mAacCodecInfos = infos;
-            SpinnerAdapter codecsAdapter = createCodecsAdapter(mAacCodecInfos);
-            mAudioCodec.setAdapter(codecsAdapter);
-            restoreSelections(mAudioCodec, mAudioChannelCount);
-        });
-        mAudioToggle.setChecked(
-                PreferenceManager.getDefaultSharedPreferences(getApplicationContext())
-                        .getBoolean(getResources().getResourceEntryName(mAudioToggle.getId()), true));
+    public static String getAppVersionName(Context context) {
+        String versionName = "";
+        try {
+            PackageManager pm = context.getPackageManager();
+            PackageInfo pi = pm.getPackageInfo(context.getPackageName(), 0);
+            versionName = pi.versionName;
+            if (versionName == null || versionName.length() <= 0) {
+                return "";
+            }
+        } catch (Exception e) {
+            Log.e("VersionInfo", "Exception", e);
+        }
+        return versionName;
     }
 
     @Override
@@ -958,13 +935,65 @@ public class MainActivity extends Activity {
         }
     }
 
+    @SuppressLint("SetTextI18n")
+    @Override
+    protected void onCreate(Bundle savedInstanceState) {
+        super.onCreate(savedInstanceState);
+        setContentView(R.layout.activity_main);
+
+        path = findViewById(R.id.path);
+        version = findViewById(R.id.version);
+
+        ObsConfiguration config = new ObsConfiguration();
+        config.setEndPoint(endPoint);
+        config.setAuthType(authType);
+        obsClient = new ObsClient(ak, sk, config);
+
+
+        task = new PostObjectTask();
+
+        mMediaProjectionManager = (MediaProjectionManager) getApplicationContext().getSystemService(MEDIA_PROJECTION_SERVICE);
+        mNotifications = new Notifications(getApplicationContext());
+        bindViews();
+
+        Utils.findEncodersByTypeAsync(VIDEO_AVC, infos -> {
+            logCodecInfos(infos, VIDEO_AVC);
+            mAvcCodecInfos = infos;
+            Log.d(TAG, "onCreate: " + infos[0].getName());
+            SpinnerAdapter codecsAdapter = createCodecsAdapter(mAvcCodecInfos);
+            mVideoCodec.setAdapter(codecsAdapter);
+            restoreSelections(mVideoCodec, mVieoResolution, mVideoFramerate, mIFrameInterval, mVideoBitrate);
+
+        });
+        Utils.findEncodersByTypeAsync(AUDIO_AAC, infos -> {
+            logCodecInfos(infos, AUDIO_AAC);
+            mAacCodecInfos = infos;
+            SpinnerAdapter codecsAdapter = createCodecsAdapter(mAacCodecInfos);
+            mAudioCodec.setAdapter(codecsAdapter);
+            restoreSelections(mAudioCodec, mAudioChannelCount);
+        });
+        mAudioToggle.setChecked(
+                PreferenceManager.getDefaultSharedPreferences(getApplicationContext())
+                        .getBoolean(getResources().getResourceEntryName(mAudioToggle.getId()), true));
+
+
+        version.setText("版本号:" + getAppVersionName(this));
+    }
+
     private void stopRecordingAndOpenFile(Context context) {
         File file = new File(mRecorder.getSavedPath());
         stopRecorder();
-        MainActivity.file =file;
+        MainActivity.file = file;
         Toast.makeText(context, getString(R.string.recorder_stopped_saved_file) + " " + file, Toast.LENGTH_LONG).show();
         StrictMode.VmPolicy vmPolicy = StrictMode.getVmPolicy();
-        task.execute();
+        try {
+            String key = task.execute().get();
+            path.setText(key);
+        } catch (ExecutionException e) {
+            e.printStackTrace();
+        } catch (InterruptedException e) {
+            e.printStackTrace();
+        }
         try {
             // disable detecting FileUriExposure on public file
             StrictMode.setVmPolicy(new StrictMode.VmPolicy.Builder().build());
@@ -974,7 +1003,6 @@ public class MainActivity extends Activity {
         }
 
     }
-
 
     private void viewResult(File file) {
         Intent view = new Intent(Intent.ACTION_VIEW);
@@ -1002,6 +1030,7 @@ public class MainActivity extends Activity {
 
 
     static class PostObjectTask extends AsyncTask<Void, Void, String> {
+
 
         @Override
         protected String doInBackground(Void... params) {
@@ -1057,12 +1086,11 @@ public class MainActivity extends Activity {
                 String postUrl = "https://"+bucketName + "." + endPoint;
 
                 String res = formUpload(postUrl, formParams, file, contentType);
-
-                return "";
+                return objectKey;
             } catch (ObsException e) {
-                return "";
+                return "上传失败";
             } catch (Exception e) {
-                return "";
+                return "上传失败";
             } finally {
                 if (obsClient != null) {
                     try {
